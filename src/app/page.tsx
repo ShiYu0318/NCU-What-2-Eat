@@ -2,25 +2,30 @@
 
 import { useState } from "react";
 import { Sheet } from "@/components/Sheet";
+import { ShopSheet } from "@/components/ShopSheet";
 
 export default function Home() {
   const [shopOpen, setShopOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [joinOpen, setJoinOpen] = useState(false);
+  const [selectedRestaurantIds, setSelectedRestaurantIds] = useState<Set<string>>(new Set());
 
   return (
     <div className="flex h-dvh flex-col bg-bg text-text select-none">
       <Header />
-      <WheelStage />
+      <WheelStage selectedCount={selectedRestaurantIds.size} />
       <BottomActions
         onSelectShops={() => setShopOpen(true)}
         onCreateRoom={() => setCreateOpen(true)}
         onJoinRoom={() => setJoinOpen(true)}
       />
 
-      <Sheet open={shopOpen} onOpenChange={setShopOpen} title="選擇商家">
-        <Placeholder>商家篩選器與列表</Placeholder>
-      </Sheet>
+      <ShopSheet
+        open={shopOpen}
+        onOpenChange={setShopOpen}
+        selectedIds={selectedRestaurantIds}
+        onConfirm={setSelectedRestaurantIds}
+      />
       <Sheet open={createOpen} onOpenChange={setCreateOpen} title="創建房間">
         <Placeholder>房號與 QR Code</Placeholder>
       </Sheet>
@@ -42,7 +47,7 @@ function Header() {
   );
 }
 
-function WheelStage() {
+function WheelStage({ selectedCount }: { selectedCount: number }) {
   return (
     <main className="flex flex-1 items-center justify-center px-6">
       <div className="relative aspect-square w-full max-w-[22rem]">
@@ -52,7 +57,9 @@ function WheelStage() {
           style={{ clipPath: "polygon(50% 100%, 0 0, 100% 0)" }}
         />
         <div className="flex size-full items-center justify-center rounded-full border border-border bg-card">
-          <p className="text-sm text-text-muted">選擇商家後開始</p>
+          <p className="text-sm text-text-muted">
+            {selectedCount > 0 ? `已選 ${selectedCount} 間餐廳` : "選擇商家後開始"}
+          </p>
         </div>
       </div>
     </main>

@@ -142,7 +142,7 @@ def scrape(url: str, area: str) -> dict | None:
                     pass
 
             # 評論數 & 價位
-            # lyplG 包含「(557)·$1-200」這類文字，同時提供兩者
+            # lyplG: (557)·$1-200
             review_count = 0
             price_range = '$'
             lyplg = page.query_selector('div.lyplG')
@@ -198,7 +198,7 @@ def scrape(url: str, area: str) -> dict | None:
             }
 
         except Exception as e:
-            print(f'  [錯誤] {e}')
+            print(f'[錯誤] {e}')
             browser.close()
             return None
 
