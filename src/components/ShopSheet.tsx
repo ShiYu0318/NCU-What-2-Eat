@@ -39,6 +39,12 @@ export type Restaurant = {
 const AREAS = ["全部", "後門", "宵夜街", "松苑餐廳", "松果餐廳"] as const;
 const PRICES = ["$", "$$", "$$$"] as const;
 
+const PRICE_LABEL: Record<string, string> = {
+  "$":   "$1–200",
+  "$$":  "$200–400",
+  "$$$": "$400–600",
+};
+
 const DAY_ITEMS = [
   { value: 0, label: "週日" },
   { value: 1, label: "週一" },
@@ -177,13 +183,11 @@ function Chip({ active, onClick, children, dimmed }: {
 
 type CheckState = "none" | "some" | "all";
 
-function TriCheckbox({ state, onClick }: { state: CheckState; onClick: () => void }) {
+function TriCheckbox({ state }: { state: CheckState }) {
   const filled = state !== "none";
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="shrink-0 size-4.5 rounded flex items-center justify-center transition-colors"
+    <div
+      className="shrink-0 size-4.5 rounded flex items-center justify-center"
       style={{ background: filled ? "#0A84FF" : "transparent", border: filled ? "none" : "1.5px solid rgba(255,255,255,0.25)" }}
     >
       {state === "all" && (
@@ -196,24 +200,23 @@ function TriCheckbox({ state, onClick }: { state: CheckState; onClick: () => voi
           <line x1="1" y1="1" x2="7" y2="1" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       )}
-    </button>
+    </div>
   );
 }
 
-function FilterRow({ label, dimmed, children }: {
+function FilterRow({ label, children, action }: {
   label: string;
-  dimmed?: boolean;
   children: React.ReactNode;
+  action?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center gap-0 min-h-8">
-      <span className={`shrink-0 w-9 text-xs font-medium transition-colors ${dimmed ? "text-text-muted/40" : "text-text-muted"}`}>
-        {label}
-      </span>
+      <span className="shrink-0 w-9 text-xs font-medium text-text-muted">{label}</span>
       <div className="w-px h-3 bg-border shrink-0 mr-2.5" />
       <div className="flex gap-1.5 overflow-x-auto flex-1" style={{ scrollbarWidth: "none" }}>
         {children}
       </div>
+      {action}
     </div>
   );
 }
@@ -238,22 +241,23 @@ function RestaurantRow({ restaurant, isOpen, checked, onToggle }: {
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-1.5">
-          <span className="truncate text-sm font-medium">{restaurant.name}</span>
           <span className={`shrink-0 text-[10px] font-medium ${isOpen ? "text-green-400" : "text-text-muted"}`}>
             {isOpen ? "營業中" : "未營業"}
           </span>
+          <span className="truncate text-sm font-medium">{restaurant.name}</span>        
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-1">
           <span className="text-xs text-text-muted">{restaurant.area}</span>
-          <span className="text-xs text-text-muted">·</span>
-          <span className="text-xs text-text-muted">{restaurant.price_range}</span>
+          <span className="text-xs text-text-muted"> | </span>
+          <span className="text-xs text-text-muted">{PRICE_LABEL[restaurant.price_range] ?? restaurant.price_range}</span>
+          <span className="text-xs text-text-muted"> | </span>
+          {restaurant.rating != null && (
+          <p className="mt-0.5 text-[11px] text-text-muted">★ {restaurant.rating} ({restaurant.review_count})</p>
+          )}
           {restaurant.type.map((t) => (
             <span key={t} className="rounded-chip bg-bg-elevated px-1.5 py-0.5 text-[10px] text-text-muted">{t}</span>
           ))}
         </div>
-        {restaurant.rating != null && (
-          <p className="mt-0.5 text-[11px] text-text-muted">★ {restaurant.rating} ({restaurant.review_count})</p>
-        )}
       </div>
       <div className={`size-5 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors ${checked ? "border-accent bg-accent" : "border-border"}`}>
         {checked && (
@@ -302,8 +306,9 @@ export function ShopSheet({ open, onOpenChange, selectedIds, onConfirm }: Props)
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [savedPartial, setSavedPartial] = useState<Set<string> | null>(null);
   const [viewMode, setViewMode] = useState<"filtered" | "selected">("filtered");
+  // 進入已選視圖時的快照：清單固定，勾選狀態繼續用 live selected
+  const [frozenIds, setFrozenIds] = useState<Set<string>>(new Set());
 
-  const isSearching = search.trim().length > 0;
   const hasActiveFilters =
     area !== "全部" || typeFilter.size > 0 || priceFilter.size > 0 ||
     timeMode !== "now" || showClosed;
@@ -328,31 +333,38 @@ export function ShopSheet({ open, onOpenChange, selectedIds, onConfirm }: Props)
   const filtered = useMemo(
     () =>
       restaurants.filter((r) => {
-        if (isSearching) return r.name.toLowerCase().includes(search.toLowerCase());
+        if (search.trim() && !r.name.toLowerCase().includes(search.toLowerCase())) return false;
         if (area !== "全部" && r.area !== area) return false;
         if (typeFilter.size > 0 && !r.type.some((t) => typeFilter.has(t))) return false;
         if (priceFilter.size > 0 && !priceFilter.has(r.price_range)) return false;
         if (!showClosed && !checkIsOpen(r.business_hours, checkDay, checkTime)) return false;
         return true;
       }),
-    [restaurants, isSearching, search, area, typeFilter, priceFilter, showClosed, checkDay, checkTime],
+    [restaurants, search, area, typeFilter, priceFilter, showClosed, checkDay, checkTime],
   );
 
-  const selectedList = useMemo(
+  // 已選視圖：以進入時凍結的 ID 為清單基礎，勾選狀態讀 live selected
+  const frozenList = useMemo(
     () =>
       restaurants.filter(
         (r) =>
-          selected.has(r.id) &&
-          (!isSearching || r.name.toLowerCase().includes(search.toLowerCase())),
+          frozenIds.has(r.id) &&
+          (!search.trim() || r.name.toLowerCase().includes(search.toLowerCase())),
       ),
-    [restaurants, selected, isSearching, search],
+    [restaurants, frozenIds, search],
   );
 
-  const displayList = viewMode === "selected" ? selectedList : filtered;
+  const displayList = viewMode === "selected" ? frozenList : filtered;
 
   const filteredSelectedCount = useMemo(
     () => filtered.filter((r) => selected.has(r.id)).length,
     [filtered, selected],
+  );
+
+  // 已選視圖中，frozen 清單裡目前還打勾的數量
+  const frozenSelectedCount = useMemo(
+    () => frozenList.filter((r) => selected.has(r.id)).length,
+    [frozenList, selected],
   );
 
   useEffect(() => {
@@ -360,6 +372,7 @@ export function ShopSheet({ open, onOpenChange, selectedIds, onConfirm }: Props)
       setSelected(new Set(selectedIds));
       setSavedPartial(null);
       setViewMode("filtered");
+      setFrozenIds(new Set());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -405,7 +418,11 @@ export function ShopSheet({ open, onOpenChange, selectedIds, onConfirm }: Props)
 
   const checkState: CheckState =
     viewMode === "selected"
-      ? "all"
+      ? frozenSelectedCount === 0
+        ? "none"
+        : frozenSelectedCount === frozenList.length
+        ? "all"
+        : "some"
       : filteredSelectedCount === 0
       ? "none"
       : filteredSelectedCount === filtered.length
@@ -413,24 +430,21 @@ export function ShopSheet({ open, onOpenChange, selectedIds, onConfirm }: Props)
       : "some";
 
   const handleCheckboxClick = useCallback(() => {
-    if (viewMode === "selected") {
-      setSelected(new Set());
-      setViewMode("filtered");
-      setSavedPartial(null);
-      return;
-    }
-    const filteredIds = filtered.map((r) => r.id);
+    const targetIds = viewMode === "selected"
+      ? frozenList.map((r) => r.id)
+      : filtered.map((r) => r.id);
+
     if (checkState === "all") {
       setSelected((prev) => {
         const next = new Set(prev);
-        filteredIds.forEach((id) => next.delete(id));
+        targetIds.forEach((id) => next.delete(id));
         return next;
       });
     } else if (checkState === "some") {
       setSavedPartial(new Set(selected));
       setSelected((prev) => {
         const next = new Set(prev);
-        filteredIds.forEach((id) => next.add(id));
+        targetIds.forEach((id) => next.add(id));
         return next;
       });
     } else {
@@ -440,12 +454,12 @@ export function ShopSheet({ open, onOpenChange, selectedIds, onConfirm }: Props)
       } else {
         setSelected((prev) => {
           const next = new Set(prev);
-          filteredIds.forEach((id) => next.add(id));
+          targetIds.forEach((id) => next.add(id));
           return next;
         });
       }
     }
-  }, [viewMode, checkState, filtered, selected, savedPartial]);
+  }, [viewMode, checkState, filtered, frozenList, selected, savedPartial]);
 
   const customTimeLabel = `${DAY_ITEMS[customDay].label} ${String(customHour).padStart(2, "0")}:${String(customMinute).padStart(2, "0")}`;
 
@@ -461,7 +475,11 @@ export function ShopSheet({ open, onOpenChange, selectedIds, onConfirm }: Props)
             type="text"
             placeholder="搜尋商家"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (val.trim().length > 0 && search.trim().length === 0) resetFilters();
+              setSearch(val);
+            }}
             className="flex-1 bg-transparent text-sm text-text placeholder:text-text-muted outline-none"
           />
           {search && (
@@ -473,25 +491,19 @@ export function ShopSheet({ open, onOpenChange, selectedIds, onConfirm }: Props)
             </button>
           )}
         </div>
-        {hasActiveFilters && !isSearching && (
-          <button type="button" onClick={resetFilters}
-            className="shrink-0 text-xs text-accent active:opacity-60">
-            重置
-          </button>
-        )}
       </div>
 
       <div className="px-4 pb-2.5 flex flex-col gap-2">
-        <FilterRow label="區域" dimmed={isSearching}>
+        <FilterRow label="區域">
           {AREAS.map((a) => (
-            <Chip key={a} active={area === a} dimmed={isSearching} onClick={() => setArea(a)}>{a}</Chip>
+            <Chip key={a} active={area === a} onClick={() => setArea(a)}>{a}</Chip>
           ))}
         </FilterRow>
 
         {allTypes.length > 0 && (
-          <FilterRow label="種類" dimmed={isSearching}>
+          <FilterRow label="種類">
             {allTypes.map((t) => (
-              <Chip key={t} active={typeFilter.has(t)} dimmed={isSearching}
+              <Chip key={t} active={typeFilter.has(t)}
                 onClick={() => setTypeFilter((p) => toggleSet(p, t))}>
                 {t}
               </Chip>
@@ -499,26 +511,42 @@ export function ShopSheet({ open, onOpenChange, selectedIds, onConfirm }: Props)
           </FilterRow>
         )}
 
-        <FilterRow label="價位" dimmed={isSearching}>
+        <FilterRow label="價位">
+          <Chip active={priceFilter.size === 0} onClick={() => setPriceFilter(new Set())}>
+            全部
+          </Chip>
           {PRICES.map((price) => (
-            <Chip key={price} active={priceFilter.has(price)} dimmed={isSearching}
+            <Chip key={price} active={priceFilter.has(price)}
               onClick={() => setPriceFilter((p) => toggleSet(p, price))}>
-              {price}
+              {PRICE_LABEL[price]}
             </Chip>
           ))}
-          <div className="w-px h-4 bg-border shrink-0 self-center mx-0.5" />
-          <Chip active={showClosed} dimmed={isSearching} onClick={() => setShowClosed((v) => !v)}>
-            未營業
-          </Chip>
         </FilterRow>
 
-        <FilterRow label="時段" dimmed={isSearching}>
-          <Chip active={timeMode === "now"} dimmed={isSearching}
+        <FilterRow label="時間" action={
+          hasActiveFilters ? (
+            <button
+              type="button"
+              onClick={resetFilters}
+              aria-label="重置篩選器"
+              className="shrink-0 ml-1.5 flex size-7 items-center justify-center rounded-full bg-bg-elevated text-accent transition-transform active:scale-90"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+                <path d="M2.5 7A4.5 4.5 0 1 0 3.7 3.7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+                <path d="M4 1.5V4H1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          ) : null
+        }>
+          <Chip active={timeMode === "now"}
             onClick={() => { setTimeMode("now"); setCustomPickerOpen(false); }}>
             現在
           </Chip>
-          <Chip active={timeMode === "custom"} dimmed={isSearching} onClick={openTimePicker}>
+          <Chip active={timeMode === "custom"} onClick={openTimePicker}>
             {timeMode === "custom" ? customTimeLabel : "自訂時間"}
+          </Chip>
+          <Chip active={showClosed} onClick={() => setShowClosed((v) => !v)}>
+            未營業
           </Chip>
         </FilterRow>
 
@@ -541,16 +569,48 @@ export function ShopSheet({ open, onOpenChange, selectedIds, onConfirm }: Props)
       </div>
 
       <div className="flex items-center gap-2 border-t border-border px-4 py-2">
+        {/* 查看已選 toggle — list-check icon + 已選數量 */}
         <button
           type="button"
-          onClick={() => setViewMode((v) => v === "filtered" ? "selected" : "filtered")}
-          className={`text-xs transition-colors ${viewMode === "selected" ? "text-accent font-medium" : "text-text-muted"}`}
+          onClick={() => {
+            if (viewMode !== "selected") {
+              setFrozenIds(new Set(selected));
+              setViewMode("selected");
+            } else {
+              setViewMode("filtered");
+            }
+          }}
+          className={`flex items-center gap-1.5 h-7 px-2.5 rounded-chip text-xs font-medium transition-colors active:opacity-70 ${
+            viewMode === "selected"
+              ? "bg-accent text-white"
+              : selected.size > 0
+              ? "bg-bg-elevated text-text-muted"
+              : "bg-bg-elevated text-text-muted/40"
+          }`}
         >
-          全部 {selected.size}/{restaurants.length}
+          {/* list-with-checkmark icon */}
+          <svg width="13" height="11" viewBox="0 0 13 11" fill="none" aria-hidden>
+            <path d="M1 1.5H5.5M1 5.5H5.5M1 9.5H4" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+            <path d="M7.5 7L9 8.5L12 5" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {selected.size}/{restaurants.length}
         </button>
         <div className="flex-1" />
-        <span className="text-xs text-text-muted">篩選 {filteredSelectedCount}/{filtered.length}</span>
-        <TriCheckbox state={checkState} onClick={handleCheckboxClick} />
+        {/* 篩選計數 + 三態勾選框 — 包成獨立 pill，避免誤觸 */}
+        <div className="flex items-center gap-0 rounded-chip bg-bg-elevated overflow-hidden">
+          <span className="pl-2.5 pr-1.5 text-xs text-text-muted">
+            篩選 {filteredSelectedCount}/{filtered.length}
+          </span>
+          <div className="w-px self-stretch bg-border/60" />
+          <button
+            type="button"
+            onClick={handleCheckboxClick}
+            className="flex h-7 w-8 items-center justify-center transition-colors active:bg-white/5"
+            aria-label="全選／取消"
+          >
+            <TriCheckbox state={checkState} />
+          </button>
+        </div>
       </div>
     </div>
   );
